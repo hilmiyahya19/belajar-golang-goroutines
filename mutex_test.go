@@ -63,3 +63,59 @@ func TestRWMutex(t *testing.T) {
 	time.Sleep(5 * time.Second)
 	fmt.Println("Final Balance:", account.GetBalance())
 }
+
+type UserBalance struct {
+	sync.Mutex        // Mutex untuk mengunci akses ke data user agar thread-safe
+	Name    string    // Nama user
+	Balance int       // Saldo user
+}
+
+func (user *UserBalance) Lock() {
+	user.Mutex.Lock() // Mengunci mutex milik user ini
+}
+
+func (user *UserBalance) Unlock() {
+	user.Mutex.Unlock() // Membuka kembali mutex user
+}
+
+func (user *UserBalance) Change(amount int) {
+	user.Balance = user.Balance + amount // Mengubah saldo (tidak aman tanpa lock)
+}
+
+func Transfer(user1 *UserBalance, user2 *UserBalance, amount int) {
+	user1.Lock() // Goroutine mengunci user1 lebih dulu
+	fmt.Println("Lock user1", user1.Name)
+	user1.Change(-amount)
+
+	time.Sleep(1 * time.Second) // Memberi waktu goroutine lain berjalan
+
+	user2.Lock() // Lalu mengunci user2
+	fmt.Println("Lock user2", user2.Name)
+	user2.Change(amount)
+
+	time.Sleep(1 * time.Second)
+
+	user1.Unlock()
+	user2.Unlock()
+}
+
+// Membuat dua user dengan mutex masing-masing
+func TestDeadlock(t *testing.T) {
+	user1 := UserBalance{Name: "Eko", Balance: 1000000}
+	user2 := UserBalance{Name: "Budi", Balance: 1000000}
+
+	// pemicu deadlock, karena kedua goroutine mengunci user secara berlawanan
+	// Goroutine 1: lock Eko → lock Budi
+	// Goroutine 2: lock Budi → lock Eko
+	go Transfer(&user1, &user2, 100000)
+	go Transfer(&user2, &user1, 200000)
+
+	// Memberi waktu agar goroutine berjalan (karena Test tidak WaitGroup)
+	time.Sleep(10 * time.Second)
+
+	// Print hasil akhir (bisa tidak konsisten jika deadlock terjadi)
+	fmt.Println("User 1:", user1.Name, "Balance:", user1.Balance)
+	fmt.Println("User 2:", user2.Name, "Balance:", user2.Balance)
+}
+
+// Deadlock dapat terjadi pada kode di atas karena dua goroutine melakukan penguncian (lock) pada dua resource yang sama (mutex milik user1 dan user2) dengan urutan yang berbeda, sehingga tercipta kondisi saling menunggu (circular wait). Ketika goroutine pertama berhasil mengunci user1 lalu menunggu user2, sementara goroutine kedua sudah mengunci user2 dan menunggu user1, tidak ada goroutine yang bisa melanjutkan eksekusi karena masing-masing mutex masih terkunci. Kondisi ini diperparah oleh adanya time.Sleep yang memberi kesempatan goroutine lain untuk berjalan, sehingga potensi deadlock semakin besar. Meskipun pada eksekusi tertentu deadlock tidak selalu muncul, secara logika dan desain kode ini tetap tidak aman dan berisiko mengalami deadlock kapan saja.
